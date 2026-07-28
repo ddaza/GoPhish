@@ -1,0 +1,33 @@
+# GoPhish configuration — config-driven service endpoints.
+#
+# Copy this file to `gophish.toml` and edit. Any service omitted here falls
+# back to the built-in defaults in internal/config. A service listed here
+# replaces its default entry entirely.
+#
+# Free/freemium public sources only (AGENTS.md §2, §7). Supply credentials
+# via environment variables, never hardcode secrets.
+
+[services.rdap]
+base_url = "https://rdap.org"
+enabled = true
+requests_per_minute = 30
+
+[services.crtsh]
+base_url = "https://crt.sh"
+enabled = true
+requests_per_minute = 20
+
+[services.certstream]
+base_url = "wss://certstream.calidog.io"
+enabled = true
+
+[services.phishtank]
+base_url = "https://data.phishtank.com/data"
+enabled = true
+requests_per_minute = 10
+# Free API key (optional; improves rate limits). Read from env, not hardcoded.
+api_key_env = "PHISHTANK_API_KEY"
+
+#[services.whois]
+#enabled = false
+#requests_per_minute = 20

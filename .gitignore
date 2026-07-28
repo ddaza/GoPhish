@@ -1,0 +1,18 @@
+# Build artifacts
+/gophish
+/bin/
+
+# Local config / secrets
+.env
+
+# Go workspace
+go.work
+go.work.sum
+
+# Tags
+.tags
+
+# Binaries
+dist/
+*.exe
+*.out
