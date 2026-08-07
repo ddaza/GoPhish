@@ -42,6 +42,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func newLine(b *strings.Builder) {
+	b.WriteString("\n")
+}
+
 // View implements tea.Model. It renders the hello-world status screen.
 func (m Model) View() string {
 	var b strings.Builder
@@ -54,8 +58,11 @@ func (m Model) View() string {
 		Faint(true).
 		Render("defensive smishing/phishing OSINT detector")
 
-	b.WriteString(title + "\n")
-	b.WriteString(subtitle + "\n\n")
+	b.WriteString(title)
+	newLine(&b)
+	b.WriteString(subtitle)
+	newLine(&b)
+	newLine(&b)
 
 	enabled := 0
 	for _, svc := range m.cfg.Services {
@@ -64,8 +71,10 @@ func (m Model) View() string {
 		}
 	}
 	b.WriteString(lipgloss.NewStyle().Render(
-		"Loaded "+strconv.Itoa(len(m.cfg.Services))+
-			" services ("+strconv.Itoa(enabled)+" enabled)") + "\n\n")
+		"Loaded " + strconv.Itoa(len(m.cfg.Services)) +
+			" services (" + strconv.Itoa(enabled) + " enabled)"))
+	newLine(&b)
+	newLine(&b)
 
 	names := make([]string, 0, len(m.cfg.Services))
 	for name := range m.cfg.Services {
@@ -87,11 +96,18 @@ func (m Model) View() string {
 		if url == "" {
 			url = "(none)"
 		}
-		b.WriteString(nameStyle.Render(name) + "  " +
-			state + "  " +
-			lipgloss.NewStyle().Faint(true).Render(url) + "\n")
+
+		b.WriteString(nameStyle.Render(name))
+		b.WriteString("  ")
+		b.WriteString(state)
+		b.WriteString("  ")
+		b.WriteString(lipgloss.NewStyle().Faint(true).Render(url))
+
+		newLine(&b)
 	}
 
-	b.WriteString("\n" + lipgloss.NewStyle().Faint(true).Render("press q to quit"))
+	newLine(&b)
+	b.WriteString(lipgloss.NewStyle().Faint(true).Render("press q to quit"))
+
 	return b.String()
 }
