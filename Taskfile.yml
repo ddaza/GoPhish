@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+#
+# Build tasks for GoPhish.
+#
+# NOTE: The commands below use POSIX shell syntax (mkdir -p, rm -rf). On
+# Windows run `task` from Git Bash or WSL; on macOS use Terminal. All targets
+# are pure-Go (no CGO), so cross-compilation works from either platform.
+
+version: '3'
+
+vars:
+  BINARY: gophish
+  LDFLAGS: -s -w   # strip debug info / DWARF for smaller release binaries
+
+tasks:
+  # Shared cross-compile step. Not meant to be run directly.
+  build:
+    internal: true
+    cmds:
+      - mkdir -p dist
+      - >-
+        GOOS={{.GOOS}} GOARCH={{.GOARCH}} go build
+        -ldflags "{{.LDFLAGS}}"
+        -o dist/{{.BINARY}}-{{.GOOS}}-{{.GOARCH}}{{.EXT}} ./cmd/gophish
+
+  build:windows:
+    desc: Build for Windows (amd64) -> dist/gophish-windows-amd64.exe
+    vars:
+      GOOS: windows
+      GOARCH: amd64
+      EXT: .exe
+    cmds:
+      - task: build
+
+  build:macos:
+    desc: Build for macOS (amd64 + arm64) -> dist/gophish-darwin-*
+    cmds:
+      - task: build
+        vars: { GOOS: darwin, GOARCH: amd64, EXT: '' }
+      - task: build
+        vars: { GOOS: darwin, GOARCH: arm64, EXT: '' }
+
+  clean:
+    desc: Remove the dist/ folder
+    cmds:
+      - rm -rf dist
