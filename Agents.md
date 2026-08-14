@@ -233,6 +233,22 @@ Design:
 - **Errors**: wrap with context; don't swallow. Log at source, surface to UI.
 - **Tests**: unit tests for `fuzz`, `detect`, `sources` parsing; fixtures under
   `test/`. Network calls mocked via `httptest`.
+  - Use **testify** for assertions and error checks (`assert`, `require`) rather
+    than the stdlib `t.Errorf`/`t.Fatalf` style — it reads cleaner and gives
+    better failure messages. Import `github.com/stretchr/testify/assert` and
+    `.../require`; prefer `require` for fatal preconditions (e.g. setup that
+    must succeed before the test body runs) and `assert` for per-assertion
+    checks.
+  - Prefer `require.NoError`/`assert.NoError`, `assert.Contains`,
+    `assert.Equal`, `assert.NotNil`, `assert.NotEmpty`, etc. over manual
+    comparisons and string searches.
+  - Use a **testify `suite`** (`github.com/stretchr/testify/suite`) for a
+    package once it has enough related tests to benefit from shared setup/teardown
+    (`SetupTest`/`TearDownTest`) or shared fixtures — e.g. many tests against the
+    same `config`, store, or TUI model. Don't force a suite on a file with only
+    one or two trivial tests; plain `TestXxx(t *testing.T)` functions are fine
+    there. Keep suite names descriptive (`type XxxSuite struct { suite.Suite }`)
+    and run them with `suite.Run(t, new(XxxSuite))`.
 - **Commits**: conventional prefixes (`feat:`, `fix:`, `chore:`, `docs:`,
   `test:`). Keep commits focused.
 - **Config secrets**: free sources may still require a (free) API key
