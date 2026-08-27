@@ -1,4 +1,4 @@
-# Agents.md — GoPhish
+# AGENTS.md — GoPhish
 
 Guidance for AI coding agents (and humans) working in this repository.
 
