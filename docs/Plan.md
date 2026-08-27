@@ -597,3 +597,61 @@ Do not invent fallback behavior that weakens the scope.
 | L4 | LLM fallback | Ollama default + llama.cpp fallback noted. |
 | L5 | Go version | Pinned 1.22+ in constraints. |
 | L6 | TUI views | Listed 6 views from `AGENTS.md` §5.5. |
+
+## 12. Stack
+
+Foundational dependencies (consolidated from the former `AGENTS.md` §2). Do
+not silently swap these; propose changes in a PR per `AGENTS.md` §2/§6.
+
+| Concern         | Choice                                                | Notes                                                        |
+| --------------- | ----------------------------------------------------- | ------------------------------------------------------------ |
+| Language        | **Go** (1.22+)                                        | Strong for CLIs, concurrency, single binaries.              |
+| TUI             | **Bubble Tea** + Lipgloss + Bubbles                   | Idiomatic Go TUI framework.                                  |
+| Data fetching   | stdlib `net/http` + `golang.org/x/time/rate`          | Respect rate limits per source.                             |
+| Config          | `Viper` + `Cobra`                                     | CLI flags/subcommands + config file.                        |
+| Local LLM       | `llama.cpp` (or `ollama` HTTP); default **Ollama**    | Pluggable backend; default to Ollama for portability.        |
+| Storage (local) | SQLite (`modernc.org/sqlite`)                          | Zero-dependency local cache of seen domains/results.        |
+| Logging         | `zerolog`                                              | Structured, leveled.                                         |
+
+## 13. Subsystem guidance (condensed from former AGENTS.md §5)
+
+- **Sources** (`internal/source`): prefer **RDAP** over legacy WHOIS
+  (structured, no scraping, rate-friendly). **Certificate Transparency**
+  (crt.sh + CertStream) is a primary early signal — made configurable as the
+  primary source per §4.1/§4.8. Only free/freemium sources; record provenance
+  on every `Result` (§4.2).
+- **Fuzzing** (`internal/fuzz`): typosquat, homoglyph/punycode, TLD swap,
+  permutations. Cap combinatorial explosion: dedupe, normalize to punycode,
+  bound output (`--max`). Flag generated domains; do **not** auto-query them
+  by default — offer resolve/check as an explicit action.
+- **Detection** (`internal/detect`): similarity via Levenshtein/Damerau,
+  Jaccard on tokens, brand-substring match; bulk-registration clustering by
+  registrar, creation-window, nameservers, and templated name patterns;
+  weighted risk score from free OSINT signals only (no external reputation
+  lookups).
+- **Local LLM** (`internal/llm`): default **Ollama** HTTP with **llama.cpp**
+  fallback; summarize clusters into a campaign narrative, explain *why* a
+  domain is risky, propose related IOCs; prompts in `prompts.go`; require and
+  validate structured (JSON) output; never send secrets/cookies/credentials —
+  only public OSINT attributes.
+- **Throttle** (`internal/throttle`): per-source `Limiter` with both rate
+  (RPM) and quota (max checks / rolling window); sources call `Wait(ctx)`;
+  surface `quota_exhausted` rather than hammering (§4.6).
+
+## 14. Config reference
+
+Per-source keys (from the former `README.md` table):
+
+| Key                  | Purpose                                              |
+| -------------------- | ---------------------------------------------------- |
+| `base_url`           | Endpoint used by the source client.                  |
+| `api_key`            | Optional credential (prefer `api_key_env`).          |
+| `api_key_env`        | Env var that, if set, overrides `api_key`.           |
+| `enabled`            | Toggle the source on/off.                            |
+| `requests_per_minute`| Per-source rate limit.                              |
+| `max_checks`        | Hard quota ceiling for this source.                  |
+| `quota_window`       | Duration after which the quota counter resets.      |
+
+Global knobs: fuzzing cap (`--max`), LLM model/endpoint, and the mini-loop
+bounds (max iterations, per-seed candidate limit, expansion rules) are also
+config-driven (see §4.8). See `config.example.toml`.

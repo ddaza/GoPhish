@@ -2,237 +2,55 @@
 
 Guidance for AI coding agents (and humans) working in this repository.
 
-## 1. Purpose
+## 1. Scope & orientation
 
 GoPhish is a **defensive OSINT tool** for detecting newly registered and
-suspicious URLs used in **smishing** (SMS phishing) and **phishing** campaigns.
+suspicious URLs used in smishing/phishing campaigns. See `README.md` for the
+full product description and `docs/Plan.md` for architecture, pipeline, and
+interfaces.
 
-It helps defenders answer three questions:
+This file is about **how to implement** safely and consistently. Architecture
+and "what to build" decisions live in `docs/Plan.md`; major decisions are
+recorded as ADRs under `docs/adr/`.
 
-1. **What domains were just registered** that look like they belong to a brand
-   or target we care about?
-2. **What look-alike / bulk-registered URLs exist** that are similar to a known
-   legitimate domain (typosquats, homoglyphs, TLD swaps, sibling registrations)?
-3. **Which of these are actually malicious or suspicious**, and why — using
-   both deterministic signals and a local LLM for narrative analysis?
+Non-negotiable scope (these shape every change):
 
-The product is a **terminal UI (TUI)** with **local LLM integration** for data
-analysis. No external LLM APIs are used by default; analysis runs on a model
-hosted locally.
+- **Defensive-only.** Never generate, host, or deliver phishing content;
+  produce detections and analysis only.
+- **YAGNI / minimal.** Build only what the core loop needs; defer extras until
+  it works end-to-end.
+- **Free/freemium sources only.** No paid reputation services.
 
-> **Defensive-only scope.** This tool is for authorized security research,
-> brand protection, and incident response. It must never generate, host, or
-> deliver phishing content, nor automate attacks. It produces _detections and
-> analysis_, not operational phishing infrastructure.
+## 2. Stack
 
-> **YAGNI / minimal scope.** Build only what answers the three questions above.
-> Rely exclusively on **free or freemium public data sources** — no paid,
-> premium reputation services for now. Keep the
-> dependency surface small and the architecture boring. Defer anything not
-> needed to ship the core loop (sources → fuzz → detect → LLM).
+The foundational stack is specified in `docs/Plan.md` §12 (Go, Bubble Tea,
+Viper/Cobra, Ollama/llama.cpp, SQLite, zerolog, `golang.org/x/time/rate`).
 
-## 2. Stack & key decisions
-
-| Concern         | Choice                                              | Notes                                                        |
-| --------------- | --------------------------------------------------- | ------------------------------------------------------------ |
-| Language        | **Go** (1.22+)                                      | Project name; strong for CLIs, concurrency, single binaries. |
-| TUI             | **Bubble Tea** (charmbracelet) + Lipgloss + Bubbles | Idiomatic Go TUI framework.                                  |
-| Data fetching   | stdlib `net/http` + `golang.org/x/time/rate`        | Respect rate limits per source.                              |
-| Config          | `Viper` + `Cobra`                                   | CLI flags/subcommands + config file.                         |
-| Local LLM       | `llama.cpp` via `go-llama.cpp` (or `ollama` HTTP)   | Pluggable backend; default to Ollama for portability.        |
-| Storage (local) | SQLite (`modernc.org/sqlite`)                       | Zero-dependency local cache of seen domains/results.         |
-| Logging         | `zerolog`                                           | Structured, leveled.                                         |
-
-If a better-fit library is clearly superior, propose it in a PR description;
-do not silently swap foundational dependencies.
+Do **not** silently swap a foundational dependency. If a better-fit library is
+clearly superior, propose it in a PR description (see §3).
 
 ## 3. Proposed directory layout
 
-```text
-cmd/gophish/            # main entrypoint, wires TUI + commands
-internal/
-  config/               # config loading, API keys, model settings
-  sources/              # OSINT data source integrations (one file per source)
-    rdap.go             # RDAP registration data
-    whois.go            # fallback WHOIS (where RDAP unavailable)
-    certstream.go       # certificate transparency live stream
-    crtsh.go            # certificate transparency historical lookup
-    phishtank.go        # known phishing feed (free, no paid tier)
-  fuzz/                 # URL/domain fuzzing generators
-    typosquat.go
-    homoglyph.go
-    tldswap.go
-    permutations.go
-  detect/               # scoring + detection logic
-    similarity.go       # edit distance, jaccard, brand matching
-    bulkreg.go          # cluster bulk/templated registrations
-    score.go            # weighted risk scoring
-  llm/                  # local LLM client + prompt templates
-    client.go
-    prompts.go
-  store/                # SQLite persistence + cache
-  tui/                  # Bubble Tea models, views, styles
-    app.go
-    views/
-  analyze/              # orchestration: sources -> fuzz -> detect -> llm
-  throttle/             # per-source rate + quota limiting (hits/min, max checks)
-  cli/                  # Cobra commands (scan, watch, report, model)
-test/                   # integration/behavioral tests & fixtures
-docs/                   # architecture, threat model, data-source notes
-  adr/                  # ADRs (NNNN-title.md) + template.md
-```
+The directory layout is specified in `docs/Plan.md` §4.1. Place new code in the
+matching `internal/` package for the subsystem it implements.
 
 ## 4. Core loop (the MVP)
 
-GoPhish's value is a single pipeline that turns a seed (a brand/domain of
-interest) into a ranked, explained list of suspicious look-alikes:
-
-```text
-   seed domain
-        │
-        ▼
-   sources ──► RDAP / WHOIS, Certificate Transparency (crt.sh, CertStream),
-        │       PhishTank  →  freshly registered & certified domains
-        ▼
-   fuzz    ──► generate look-alike candidates from the seed (typosquat,
-        │       homoglyph, TLD swap, permutations)
-        ▼
-   detect  ──► score & cluster candidates against real-world observations
-        │       (similarity, bulk-registration clusters, risk score)
-        ▼
-   llm     ──► summarize clusters into a campaign narrative + explain
-                *why* a domain is risky, in structured (JSON) output
-```
-
-### 4.1 The fuzz ↔ source-check mini loop
-
-Inside the macro pipeline, `fuzz` and `detect` collaborate through a tighter
-**mini loop** that drives discovery of bulk registrations:
-
-```text
-   fuzz        ──► generate candidates for a seed / confirmed cluster
-     │
-     ▼
-   source check ──► RDAP / WHOIS / CT: is the candidate actually registered,
-     │               and by whom (registrar, nameservers, creation date)?
-     ▼
-   fuzz again  ──► expand around confirmed hits (same registrar, sibling
-                    TLDs, templated name patterns) to pull in the rest of
-                    the campaign, then check those too.
-```
-
-- The signal we specifically hunt for is **shared registration
-  infrastructure**: candidates that resolve to the _same registrar_ (ideally
-  also same nameservers / tight creation window) are strong bulk-registration
-  / campaign indicators.
-- The mini loop keeps fuzzing and re-checking until no new same-registrar
-  domains surface, then hands the resulting cluster to `detect` and `llm`.
-- **Bound it** (e.g. `--max`, an iteration cap, per-seed candidate limit) so
-  combinatorial expansion can't run away.
-
-- The pipeline is orchestrated by `internal/analyze` (`sources → fuzz →
-detect → llm`). The orchestrator **oversees the progress of the services,
-schedules them, and logs events** (see `docs/adr/0003-orchestrator-subsystem.md`). Each stage — including the mini loop above — is
-  independently testable and runs behind a cancellable context so the TUI
-  never blocks.
-- Everything is derived from **free/freemium** sources (see §2 YAGNI note);
-  no paid reputation lookups.
-- This loop _is_ the MVP. Anything not on this path (extra sources, extra
-  views, extra scoring features) is deferred until the loop works end to
-  end. Sections 5 describes the subsystems that implement each stage.
+The pipeline and the fuzz↔source-check mini loop are specified in
+`docs/Plan.md` §4.3 and §4.8. The orchestrator (`internal/analyze`) **oversees
+the progress of the services, schedules them, and logs events** (see
+`docs/adr/0003-orchestrator-subsystem.md`).
 
 ## 5. Core subsystems
 
-### 5.1 Data sources (`internal/sources`)
-
-Each source implements a common interface:
-
-```go
-type Source interface {
-    Name() string
-    Fetch(ctx context.Context, q Query) ([]Result, error)
-}
-```
-
-- Prefer **RDAP** over legacy WHOIS (structured, no scraping, rate-friendly).
-- **Certificate Transparency** (crt.sh + CertStream) is the primary early signal
-  for newly issued certificates — often earlier than WHOIS.
-- Only **free / freemium** sources are in scope. No paid, reputation
-  services yet until the core loop ships.
-- Every fetch records provenance (source, timestamp, query) for auditability.
-
-### 5.2 Fuzzing (`internal/fuzz`)
-
-Generate candidate look-alike domains from a seed legitimate domain:
-
-- **Typosquat**: char omission/insertion/transposition/adjacent-key.
-- **Homoglyph / punycode**: confusable Unicode (e.g. `rn` ↔ `m`, Cyrillic `а`).
-- **TLD swap**: same SLD across common/generic TLDs.
-- **Permutations**: brand+keyword (e.g. `brand-login`, `brand-secure`).
-  Cap combinatorial explosion: dedupe, normalize to punycode, and bound output
-  (e.g. `--max 5000`). Flag generated domains, do not auto-query them all by
-  default — offer "resolve/check" as an explicit action.
-
-### 5.3 Detection (`internal/detect`)
-
-- **Similarity**: Levenshtein/Damerau, Jaccard on tokens, brand-substring match.
-- **Bulk registration**: cluster domains by registrar, creation-window,
-  nameservers, and templated name patterns to surface campaign-scale activity.
-- **Risk score**: weighted combination of signals (age, similarity, CT volume,
-  nameserver/registrar overlap, homoglyph use). Output is a score +
-  human-readable reasons. No external reputation lookups — derive signals
-  solely from the free OSINT sources above.
-
-### 5.4 Local LLM (`internal/llm`)
-
-- Default backend: **Ollama** HTTP API (`/api/generate`) with a configurable
-  model (e.g. `llama3.1:8b`). Fallback: direct `llama.cpp` bindings.
-- Used for: summarizing a cluster of suspicious domains into a campaign
-  narrative, explaining _why_ a domain is risky, and proposing related IOCs.
-- Prompt templates live in `prompts.go`. Keep prompts constrained and
-  instruction-tight; require the model to return structured output (JSON) that
-  is validated before display.
-- Never send secrets, cookies, or raw credentials to the model. Only public
-  OSINT attributes (domain, registrar, cert, score, reasons).
-
-### 5.5 TUI (`internal/tui`)
-
-- Bubble Tea `Model` with views: **Search/Seed**, **Results list**,
-  **Domain detail**, **Clusters/ campaigns**, **LLM analysis**, **Settings**.
-- Keyboard-first; mouse optional. Use Lipgloss for theming, Bubbles for
-  lists/textinputs/viewport.
-- Never block the UI thread: all network/LLM work goes through
-  `cmd`/`tea.Cmd` with spinners and cancellable contexts.
-
-### 5.6 Throttling & quotas (`internal/throttle`)
-
-Free/freemium APIs cap usage two ways, and the throttle system models **both**
-per source:
-
-- **Rate** — requests over time (e.g. _hits per minute_ / RPM). Smoothly pace
-  calls with `golang.org/x/time/rate` so we stay under a source's rate limit.
-- **Quota / total cap** — a hard ceiling on checks (e.g. "max N lookups per
-  day", or a lifetime cap). This generalizes limits like VirusTotal's
-  max-checks-per-period, but the same could be applied to PhishTank, crt.sh, RDAP, etc.
-
-Design:
-
-- One `Limiter` per source, combining a `rate.Limiter` with a quota counter
-  (optional rolling window + reset). Both exposed via config (e.g.
-  `requests_per_minute`, `max_checks`, `quota_window`).
-- Sources call `Wait(ctx)` before each request. The **mini loop (§4.1)** and
-  the orchestrator (`internal/analyze`) must honor it: when a source's quota
-  is exhausted, stop checking that source and surface "quota exhausted"
-  rather than erroring or hammering it.
-- Defaults are conservative; operators tune per source. The fuzz/expansion
-  bounds from §4.1 compound with the throttle, so a capped source naturally
-  limits how far the mini loop expands.
+The `source`/`fuzz`/`detect`/`llm`/`throttle` subsystems and their interfaces
+are specified in `docs/Plan.md` §4.2 and §13.
 
 ## 6. Conventions
 
 - **Style**: `gofmt`/`goimports`; `go vet` and `golangci-lint` clean.
 - **Errors**: wrap with context; don't swallow. Log at source, surface to UI.
-- **Tests**: unit tests for `fuzz`, `detect`, `sources` parsing; fixtures under
+- **Tests**: unit tests for `fuzz`, `detect`, `source` parsing; fixtures under
   `test/`. Network calls mocked via `httptest`.
   - Use **testify** for assertions and error checks (`assert`, `require`) rather
     than the stdlib `t.Errorf`/`t.Fatalf` style — it reads cleaner and gives
@@ -256,6 +74,8 @@ Design:
   (e.g. PhishTank). Read any key from env/config, never hardcode it;
   `.env` is gitignored. No paid API credentials are used.
 - **No external network at build time**; network only at runtime, behind flags.
+- **Dependencies**: do not silently swap foundational dependencies (see §2);
+  propose changes in a PR description.
 
 ## 7. Security & legal guardrails (mandatory)
 
@@ -270,7 +90,7 @@ Design:
    detection_. It must not produce ready-to-send lures, payloads, or message
    templates. LLM prompts must forbid generating attack content.
 4. **Rate limiting & politeness.** Honor each source's ToS, rate, and quota
-   limits (see §5.6). Provide conservative defaults and per-source
+   limits (see Plan.md §4.6). Provide conservative defaults and per-source
    concurrency caps.
 5. **Data minimization.** Cache only what's needed for analysis; provide a
    `store purge` command. No PII beyond what public OSINT inherently contains.
@@ -284,18 +104,20 @@ Design:
   `docs/adr/`, named `NNNN-short-title.md` (zero-padded, e.g. `0001-...`) and
   following `docs/adr/template.md` (Status, Context, Decision, Consequences).
   A change is **major** when it:
-  - creates a **new system/subsystem** (e.g. the throttle package, §5.6),
-  - **implements a core interface** (e.g. adding a `Source`, §5.1),
-  - **rewrites a core method** or changes the core loop / mini loop (§4), or
-  - **swaps a foundational dependency** in the §2 stack table.
+  - creates a **new system/subsystem** (e.g. the orchestrator, ADR-0003),
+  - **implements a core interface** (e.g. adding a `Source`, defined in
+    Plan.md §4.2),
+  - **rewrites a core method** or changes the core loop / mini loop
+    (Plan.md §4.3/§4.8), or
+  - **swaps a foundational dependency** in the stack (Plan.md §12).
     Minor logic tweaks, refactors, and moving code around are **not** major and
     need no ADR. Keep ADRs lightweight and consistent with the YAGNI scope (§1):
     record only decisions that shape the architecture.
-- Before adding a feature, check whether it fits one of the subsystems above
-  (§5); place code in the matching `internal/` package.
-- When adding a data source, implement the `Source` interface (this is a major
-  change — file an ADR per §8), add config keys, document the source in `docs/`,
-  and add a parsing test with a fixture.
+- Before adding a feature, check whether it fits one of the subsystems in
+  `docs/Plan.md` §13; place code in the matching `internal/` package.
+- When adding a data source, implement the `Source` interface (Plan.md §4.2 —
+  this is a major change, file an ADR), add config keys, document the source in
+  `docs/`, and add a parsing test with a fixture.
 - When touching the LLM layer, keep prompts in `prompts.go` and add a
   structured-output validation test.
 - Prefer small, compilable increments. Run `go build ./...` and
