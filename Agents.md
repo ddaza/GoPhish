@@ -131,7 +131,8 @@ Inside the macro pipeline, `fuzz` and `detect` collaborate through a tighter
   combinatorial expansion can't run away.
 
 - The pipeline is orchestrated by `internal/analyze` (`sources → fuzz →
-detect → llm`). Each stage — including the mini loop above — is
+detect → llm`). The orchestrator **oversees the progress of the services,
+schedules them, and logs events** (see `docs/adr/0003-orchestrator-subsystem.md`). Each stage — including the mini loop above — is
   independently testable and runs behind a cancellable context so the TUI
   never blocks.
 - Everything is derived from **free/freemium** sources (see §2 YAGNI note);

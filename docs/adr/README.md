@@ -12,3 +12,6 @@ sequentially, zero-padded (e.g. `0001-...`). Keep them lightweight.
 
 - `0001-scope-free-freemium-sources-only.md` — only free/freemium OSINT
   sources; no paid reputation services (VirusTotal, URLScan, ...).
+- `0002-config-implementation.md` - configuration Implementation strategy
+- `0003-orchestrator-subsystem.md` — `internal/analyze` orchestrator: oversees
+  services, schedules them, logs events; exposes the shared `Service` interface.
