@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"sync/atomic"
+
+	"go.uber.org/zap"
 )
 
 // ---- Fake Source ----
@@ -121,18 +123,11 @@ func (f *FakeSummarizer) Summarize(ctx context.Context, findings []Finding) (Nar
 	return f.NarrativeToReturn, nil
 }
 
-// ---- Fake Logger (records calls) ----
+// ---- Test logger helper ----
 
-// FakeLogger records log calls for assertion in tests.
-type FakeLogger struct {
-	Infos  []string
-	Warns  []string
-	Errors []string
-}
-
-func (f *FakeLogger) Info(msg string, _ ...any)  { f.Infos = append(f.Infos, msg) }
-func (f *FakeLogger) Warn(msg string, _ ...any)  { f.Warns = append(f.Warns, msg) }
-func (f *FakeLogger) Error(msg string, _ ...any) { f.Errors = append(f.Errors, msg) }
+// testLogger returns a *zap.Logger that writes nothing and is safe for
+// tests. Use zap.NewNop() directly if no assertions are needed.
+func testLogger() *zap.Logger { return zap.NewNop() }
 
 // MakeCandidates creates n deterministic candidates from a seed for tests.
 func MakeCandidates(seed string, n int) []Candidate {

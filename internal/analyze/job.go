@@ -125,7 +125,11 @@ func (j *jobState) transition(to, stage string) error {
 			Stage: stage,
 		},
 	}
-	go j.broadcast(ev) // release lock; broadcast takes its own locks
+	// Call broadcast directly (synchronously) while holding js.mu.
+	// This ensures the event is delivered before transition() returns,
+	// so subscribers added immediately after transition() will see it.
+	// Lock order: js.mu -> js.subMu (same as EventBroker.broadcast).
+	j.broadcast(ev)
 	return nil
 }
 

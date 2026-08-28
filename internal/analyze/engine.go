@@ -2,25 +2,13 @@ package analyze
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
-
-// Logger is the minimal interface the engine needs.
-// Production code should wire a zerolog.Logger (Plan §12).
-type Logger interface {
-	Info(msg string, keysAndValues ...any)
-	Warn(msg string, keysAndValues ...any)
-	Error(msg string, keysAndValues ...any)
-}
-
-// nopLogger satisfies Logger with no-op methods.
-type nopLogger struct{}
-
-func (nopLogger) Info(string, ...any)  {}
-func (nopLogger) Warn(string, ...any)  {}
-func (nopLogger) Error(string, ...any) {}
 
 // MiniLoopConfig bounds the fuzz↔source-check mini loop (Plan §4.8).
 type MiniLoopConfig struct {
@@ -44,11 +32,11 @@ type Engine struct {
 	summarizer Summarizer
 
 	loop MiniLoopConfig
-	log  Logger
+	log  *zap.Logger
 
 	mu     sync.Mutex
-	jobs    map[string]*jobState
-	broker  *EventBroker
+	jobs   map[string]*jobState
+	broker *EventBroker
 }
 
 // NewEngine constructs an Engine with the service implementations
@@ -59,21 +47,21 @@ type Engine struct {
 // are cheap in the MVP and let each job run independently under
 // its own cancellable context.
 func NewEngine(source Source, fuzzer Fuzzer, scorer Scorer,
-	clusterer Clusterer, summarizer Summarizer, loop MiniLoopConfig, log Logger,
+	clusterer Clusterer, summarizer Summarizer, loop MiniLoopConfig, log *zap.Logger,
 ) *Engine {
 	e := &Engine{
-		source:    source,
-		fuzzer:    fuzzer,
-		scorer:    scorer,
-		clusterer: clusterer,
+		source:     source,
+		fuzzer:     fuzzer,
+		scorer:     scorer,
+		clusterer:  clusterer,
 		summarizer: summarizer,
-		loop:      loop,
-		log:       log,
-		jobs:      make(map[string]*jobState),
-		broker:    NewEventBroker(),
+		loop:       loop,
+		log:        log,
+		jobs:       make(map[string]*jobState),
+		broker:     NewEventBroker(),
 	}
 	if e.log == nil {
-		e.log = nopLogger{}
+		e.log = zap.NewNop()
 	}
 	return e
 }
@@ -111,7 +99,7 @@ func (e *Engine) RunAnalysis(ctx context.Context, req AnalysisRequest) (string, 
 	e.broker.Register(id, js)
 	e.mu.Unlock()
 
-	e.log.Info("job created", "jobID", id, "seed", req.Seed)
+	e.log.Info("job created", zap.String("jobID", id), zap.String("seed", req.Seed))
 
 	// Run the pipeline in its own goroutine (MVP transport).
 	// We emit job_created from inside the goroutine so that
@@ -154,7 +142,7 @@ func (e *Engine) Cancel(ctx context.Context, jobID string) error {
 	}
 	js.cancel()
 	js.cancelFunc()
-	e.log.Info("job cancelled", "jobID", jobID)
+	e.log.Info("job cancelled", zap.String("jobID", jobID))
 	return nil
 }
 
@@ -221,10 +209,16 @@ func (e *Engine) run(ctx context.Context, jobID string) {
 	results, err := e.source.Fetch(sctx, Query{Domain: js.Job.Seed, Mode: "registration"})
 	seedCancel()
 	if err != nil {
-		js.fail(fmt.Errorf("seed lookup: %w", err))
+		// If the source returned a cancellation error, honor it by
+		// transitioning to CANCELLED rather than FAILED.
+		if errors.Is(err, context.Canceled) {
+			js.cancelJob()
+		} else {
+			js.fail(fmt.Errorf("seed lookup: %w", err))
+		}
 		return
 	}
-	e.log.Info("seed lookup complete", "jobID", jobID, "results", len(results))
+	e.log.Info("seed lookup complete", zap.String("jobID", jobID), zap.Int("results", len(results)))
 
 	// --- 2. Fuzz ---
 	if err := js.transition(StateFuzzing, "fuzz"); err != nil {
@@ -239,6 +233,11 @@ func (e *Engine) run(ctx context.Context, jobID string) {
 	js.addProgressFuzzed(len(candidates))
 
 	// --- 3. Check (source-check candidates through throttle) ---
+	// Transition to CHECKING before iterating candidates.
+	if err := js.transition(StateChecking, "check"); err != nil {
+		js.fail(err)
+		return
+	}
 	// In the MVP, throttle is deferred (Slice 3). We call the
 	// source directly; the throttle wrapper is injected via a
 	// thin decorator in the production wiring.
@@ -251,7 +250,7 @@ func (e *Engine) run(ctx context.Context, jobID string) {
 		r, err := e.source.Fetch(ctx, Query{Domain: c.Normalized, Mode: "registration"})
 		if err != nil {
 			js.addQuotaExhausted(e.source.Name())
-			e.log.Warn("source error on candidate", "jobID", jobID, "err", err)
+			e.log.Warn("source error on candidate", zap.String("jobID", jobID), zap.Error(err))
 			continue
 		}
 		js.addProgressChecked(1)
@@ -317,11 +316,16 @@ func (e *Engine) run(ctx context.Context, jobID string) {
 		}
 		f, err := e.scorer.Score(c, results)
 		if err != nil {
-			js.addQuotaExhausted(e.source.Name())
+			js.addQuotaExhausted("scorer")
 			continue
 		}
 		findings = append(findings, f)
 		js.addProgressScored(1)
+		// Write findings to the job snapshot incrementally so
+		// GetJob callers can observe them as the pipeline runs.
+		js.mu.Lock()
+		js.Job.Findings = append(js.Job.Findings, f)
+		js.mu.Unlock()
 		e.broker.broadcast(jobID, Event{
 			JobID:   jobID,
 			Type:    EventScored,
@@ -332,11 +336,11 @@ func (e *Engine) run(ctx context.Context, jobID string) {
 
 	clusters, err := e.clusterer.Cluster(findings)
 	if err != nil {
-		js.addQuotaExhausted(e.source.Name())
+		js.addQuotaExhausted("clusterer")
 	} else {
 		js.addProgressClustered(len(clusters))
 	}
-	e.log.Info("scoring + clustering complete", "jobID", jobID, "findings", len(findings), "clusters", len(clusters))
+	e.log.Info("scoring + clustering complete", zap.String("jobID", jobID), zap.Int("findings", len(findings)), zap.Int("clusters", len(clusters)))
 
 	// --- 5. Summarize (optional LLM narrative) ---
 	if err := js.transition(StateSummarizing, "summarize"); err != nil {
@@ -346,7 +350,7 @@ func (e *Engine) run(ctx context.Context, jobID string) {
 
 	narrative, err := e.summarizer.Summarize(ctx, findings)
 	if err != nil {
-		e.log.Info("summarize skipped", "jobID", jobID, "err", err)
+		e.log.Info("summarize skipped", zap.String("jobID", jobID), zap.Error(err))
 	} else {
 		js.mu.Lock()
 		js.Job.Narrative = &narrative
@@ -373,7 +377,7 @@ func (e *Engine) run(ctx context.Context, jobID string) {
 		Payload: DonePayload{State: StateCompleted},
 	})
 
-	e.log.Info("job complete", "jobID", jobID)
+	e.log.Info("job complete", zap.String("jobID", jobID))
 }
 
 // ---- payload types for events ----
