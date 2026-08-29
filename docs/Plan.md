@@ -37,20 +37,38 @@ Most of the pipeline described in `AGENTS.md` is **not implemented yet**.
 The diagram’s overall direction is sound, but several choices would create
 avoidable complexity for a defensive OSINT CLI/TUI.
 
-### 3.1 Don’t network-wrap the orchestrator in MVP
+### 3.1 Two distinct communication boundaries
 
-The diagram shows the CLI/TUI and API talking to a Service Layer through
-WebSocket or gRPC. For a Go single-binary tool, that’s premature.
+The diagram shows one “Service Layer → WebSocket/gRPC → Backend services”
+boundary. Your clarification splits this into two separate boundaries, and they
+must not be conflated:
 
-- TUI and CLI should call **Go interfaces directly**.
-- The **same consumer-facing `Service` interface** is used by both TUI and (future) API, so they share logic but differ only in transport.
-- Add a transport adapter later, only when someone needs remote integration.
+- **Orchestrator ↔ microservices (source/fuzz/detect/llm)** — this is where
+  **WebSocket or gRPC** belongs. The orchestrator connects to each backend
+  service over a transport adapter. This matches the diagram’s intent.
+- **Interaction services (TUI / API / SDK) ↔ orchestrator** — these do **not**
+  use the WS/gRPC transport. They communicate with the orchestrator through a
+  **shared interface contract** plus programmatic glue code. The WS/gRPC
+  transport is internal to the orchestrator↔service boundary and is never
+  exposed to clients.
+
+So the earlier “don’t network-wrap the orchestrator” note is refined: keep
+WS/gRPC *inside* the service boundary; keep clients on the `Service` interface.
+
+**Evolution, not big-bang:** In the MVP the microservices run as **goroutines**
+in a single binary, wired through in-process adapters behind the same
+interfaces — no network transport yet. The WS/gRPC adapter is added later as the
+boundary hardens, and the eventual target is to **extract each microservice into
+its own container and orchestrate them with Kubernetes**, where the
+orchestrator↔service calls become cross-pod RPC. The interfaces stay stable
+across all three stages, so each step is a swap of the adapter, not a rewrite.
 
 ### 3.2 The Service Layer is split into explicit roles
 
 A single box labeled “Service Layer” tends to absorb everything. We split it:
 
-- **Transport adapters** — `cmd/gophish` (TUI/CLI) today; `internal/api` later.
+- **Service-transport adapters** — `internal/transport` (gRPC/WS) carry orchestrator ↔ microservice calls. Hidden from clients.
+- **Interaction adapters** — `cmd/gophish` (TUI/CLI) today; `internal/api` later. They call the orchestrator through the `Service` interface + glue, not the WS/gRPC transport.
 - **Orchestrator** — `internal/analyze`: *oversees the progress of the services, schedules them, and logs events*. This is the commander (see ADR-0003).
 - **Config** — `internal/config`.
 - **Services** — `source`, `fuzz`, `detect`, `llm`, each behind its own interface.
@@ -139,6 +157,10 @@ internal/
 
   config/
     config.go        # existing config loader
+
+  transport/        # orchestrator <-> microservice adapters; MVP=goroutines, later gRPC/WS; deferred
+    grpc.go
+    ws.go
 ```
 
 Notes on reconciliation with `AGENTS.md`:
@@ -295,6 +317,15 @@ type Store interface {
 }
 ```
 
+Two call styles use these interfaces:
+
+1. **Orchestrator → service**: calls travel over a transport adapter
+   (`internal/transport`, WS/gRPC target). In MVP we start with an in-process
+   adapter behind the same interface; the WS/gRPC adapter is the intended
+   production transport.
+2. **Interaction → orchestrator**: TUI/API/SDK call the `Service` interface
+   via glue code. They never see the WS/gRPC transport.
+
 Keep interfaces small. Use dependency injection in `cmd/gophish` only.
 
 ### 4.3 Orchestrator responsibility
@@ -444,6 +475,22 @@ fuzz again ──► expand around confirmed hits (config-bound)
 source check again ──► until no new same-registrar domains or cap reached
 ```
 
+### 4.9 Communication boundaries
+
+Two boundaries, deliberately different:
+
+| Boundary | Transport (MVP → target) | Notes |
+| --- | --- | --- |
+| Orchestrator ↔ microservices (source/fuzz/detect/llm) | **goroutines (MVP)** → **WebSocket/gRPC** → **containers orchestrated by Kubernetes** | Internal; not exposed to clients. The `Source`/`Fuzzer`/`Scorer`/`Clusterer`/`Summarizer` interfaces are the contract the adapters implement; each stage swaps the adapter, not the logic. |
+| Interaction services (TUI/API/SDK) ↔ orchestrator | **Interface contract + glue code** (`Service` interface) | No WS/gRPC to clients. TUI and API share logic, differ only in presentation/transport. |
+
+In the MVP the microservices run as **goroutines** in one binary, wired through
+in-process adapters — no network transport. The WS/gRPC adapter is added later
+as the boundary hardens, and the eventual target is to **extract each
+microservice into its own container and orchestrate them with Kubernetes**, where
+orchestrator↔service calls become cross-pod RPC. This keeps the “good enough,
+iterate” principle while honoring your target topology.
+
 ## 5. Implementation order
 
 Do this in vertical slices. Each slice should be runnable end-to-end.
@@ -491,6 +538,14 @@ Do this in vertical slices. Each slice should be runnable end-to-end.
    - defer until UI and CLI feel solid
    - `internal/api` later, reusing the `Service` interface
 
+10. **Service-transport adapter + containerization (WS/gRPC → k8s)**
+   - add `internal/transport` (gRPC/WS) implementing the service interfaces
+   - only after the in-process (goroutine) pipeline (slices 1–8) is proven
+   - later: extract each microservice into its own container, orchestrate with
+     Kubernetes; orchestrator↔service calls become cross-pod RPC
+   - clients (TUI/API/SDK) stay on the `Service` interface; this does not
+     change their code
+
 ## 6. Constraints
 
 - **Go 1.22+** (per `AGENTS.md` §2; repo `go.mod` is 1.25.0).
@@ -515,7 +570,6 @@ Avoid:
 - generated code unless generated by local tooling
 - external services requiring paid tiers
 - secrets in config besides `api_key_env` references
-- WebSocket/gRPC in-process unless adding a real external API later
 
 ## 8. Security boundaries
 
@@ -596,7 +650,8 @@ Do not invent fallback behavior that weakens the scope.
 | L3 | False-positive label | `Finding.Confidence`/`Label` + UI labeling rule. |
 | L4 | LLM fallback | Ollama default + llama.cpp fallback noted. |
 | L5 | Go version | Pinned 1.22+ in constraints. |
-| L6 | TUI views | Listed 6 views from `AGENTS.md` §5.5. |
+| L6 | TUI views | Listed 6 views from `Plan.md` §5.7. |
+| 10 | Transport boundaries | Orchestrator↔services use WS/gRPC (`internal/transport`); interaction↔orchestrator use `Service` interface + glue, no WS/gRPC to clients. |
 
 ## 12. Stack
 
