@@ -13,15 +13,15 @@ import (
 //
 // The CHECKING ⇄ FUZZING edges are the mini loop (Plan §4.8).
 const (
-	StateCreated      = "CREATED"
-	StateSeeding      = "SEEDING"
-	StateFuzzing      = "FUZZING"
-	StateChecking     = "CHECKING"
-	StateScoring      = "SCORING"
-	StateSummarizing  = "SUMMARIZING"
-	StateCompleted    = "COMPLETED"
-	StateFailed       = "FAILED"
-	StateCancelled    = "CANCELLED"
+	StateCreated     = "CREATED"
+	StateSeeding     = "SEEDING"
+	StateFuzzing     = "FUZZING"
+	StateChecking    = "CHECKING"
+	StateScoring     = "SCORING"
+	StateSummarizing = "SUMMARIZING"
+	StateCompleted   = "COMPLETED"
+	StateFailed      = "FAILED"
+	StateCancelled   = "CANCELLED"
 )
 
 // validTransitions encodes the state machine from Plan §4.4. A nil map
@@ -29,8 +29,8 @@ const (
 // separately so a single error path covers all of them).
 var validTransitions = map[string]map[string]struct{}{
 	StateCreated: {
-		StateSeeding:  {},
-		StateFailed:   {},
+		StateSeeding:   {},
+		StateFailed:    {},
 		StateCancelled: {},
 	},
 	StateSeeding: {
@@ -58,9 +58,9 @@ var validTransitions = map[string]map[string]struct{}{
 		StateCancelled:   {},
 	},
 	StateSummarizing: {
-		StateCompleted:  {},
-		StateFailed:     {},
-		StateCancelled:  {},
+		StateCompleted: {},
+		StateFailed:    {},
+		StateCancelled: {},
 	},
 }
 
@@ -69,9 +69,9 @@ var validTransitions = map[string]map[string]struct{}{
 type jobState struct {
 	mu sync.Mutex
 	Job
-	cancel  context.CancelFunc
-	subMu   sync.Mutex
-	subs    []chan Event
+	cancel context.CancelFunc
+	subMu  sync.Mutex
+	subs   []chan Event
 }
 
 // snapshot returns a copy of the Job fields safe to hand to callers

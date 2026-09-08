@@ -61,8 +61,8 @@ type Candidate struct {
 type Finding struct {
 	Domain     string
 	Score      float64
-	Confidence string   // "high" | "medium" | "low" (drives UI label, §8.3)
-	Label      string   // e.g. "suspicious, unverified" for low confidence
+	Confidence string // "high" | "medium" | "low" (drives UI label, §8.3)
+	Label      string // e.g. "suspicious, unverified" for low confidence
 	Reasons    []string
 	ClusterIDs []string
 	Results    []Result
@@ -87,6 +87,7 @@ type Cluster struct {
 type Fuzzer interface {
 	Name() string
 	Generate(ctx context.Context, seed string, max int) ([]Candidate, error)
+	Score() string
 }
 
 type Scorer interface {
@@ -126,10 +127,10 @@ type Job struct {
 
 // JobProgress tracks pipeline throughput.
 type JobProgress struct {
-	Fuzzed        int
-	Checked       int
-	Scored        int
-	Clustered     int
+	Fuzzed         int
+	Checked        int
+	Scored         int
+	Clustered      int
 	QuotaExhausted []string
 }
 

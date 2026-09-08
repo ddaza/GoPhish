@@ -13,15 +13,15 @@ import (
 // FakeSource is a deterministic Source for tests. It returns
 // canned results or an error based on its configuration.
 type FakeSource struct {
-	NameVal        string
+	NameVal         string
 	ResultsToReturn []Result
-	ShouldError    bool
-	ErrorToReturn  error
-	CallCount      atomic.Int32
-	LastQuery      Query
+	ShouldError     bool
+	ErrorToReturn   error
+	CallCount       atomic.Int32
+	LastQuery       Query
 }
 
-func (f *FakeSource) Name() string              { return f.NameVal }
+func (f *FakeSource) Name() string { return f.NameVal }
 func (f *FakeSource) Fetch(ctx context.Context, q Query) ([]Result, error) {
 	f.CallCount.Add(1)
 	f.LastQuery = q
@@ -35,13 +35,13 @@ func (f *FakeSource) Fetch(ctx context.Context, q Query) ([]Result, error) {
 
 // FakeFuzzer is a deterministic Fuzzer for tests.
 type FakeFuzzer struct {
-	NameVal           string
+	NameVal            string
 	CandidatesToReturn []Candidate
-	ShouldError       bool
-	ErrorToReturn     error
-	CallCount         atomic.Int32
-	LastSeed          string
-	LastMax           int
+	ShouldError        bool
+	ErrorToReturn      error
+	CallCount          atomic.Int32
+	LastSeed           string
+	LastMax            int
 }
 
 func (f *FakeFuzzer) Name() string {
@@ -63,9 +63,9 @@ func (f *FakeFuzzer) Generate(ctx context.Context, seed string, max int) ([]Cand
 // FakeScorer is a deterministic Scorer for tests.
 type FakeScorer struct {
 	FindingsToReturn []Finding
-	ShouldError     bool
-	ErrorToReturn   error
-	CallCount       atomic.Int32
+	ShouldError      bool
+	ErrorToReturn    error
+	CallCount        atomic.Int32
 }
 
 func (f *FakeScorer) Score(candidate Candidate, results []Result) (Finding, error) {
@@ -92,9 +92,9 @@ func (f *FakeScorer) Score(candidate Candidate, results []Result) (Finding, erro
 // FakeClusterer is a deterministic Clusterer for tests.
 type FakeClusterer struct {
 	ClustersToReturn []Cluster
-	ShouldError     bool
-	ErrorToReturn   error
-	CallCount       atomic.Int32
+	ShouldError      bool
+	ErrorToReturn    error
+	CallCount        atomic.Int32
 }
 
 func (f *FakeClusterer) Cluster(findings []Finding) ([]Cluster, error) {
@@ -110,9 +110,9 @@ func (f *FakeClusterer) Cluster(findings []Finding) ([]Cluster, error) {
 // FakeSummarizer is a deterministic Summarizer for tests.
 type FakeSummarizer struct {
 	NarrativeToReturn Narrative
-	ShouldError      bool
-	ErrorToReturn    error
-	CallCount        atomic.Int32
+	ShouldError       bool
+	ErrorToReturn     error
+	CallCount         atomic.Int32
 }
 
 func (f *FakeSummarizer) Summarize(ctx context.Context, findings []Finding) (Narrative, error) {
