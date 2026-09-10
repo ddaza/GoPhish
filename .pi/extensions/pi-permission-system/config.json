@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/gotgenes/pi-packages/main/packages/pi-permission-system/schemas/permissions.schema.json",
+  "permission": {
+    "*": "ask",
+    "read": "allow",
+    "write": "allow",
+    "path": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny"
+    },
+    "bash": {
+      "*": "ask",
+      "cat *": "allow",
+      "cd": "allow",
+      "echo *": "allow",
+      "fd *": "allow",
+      "find *": "allow",
+      "git branch": "allow",
+      "git diff": "allow",
+      "git log *": "allow",
+      "git status": "allow",
+      "grep *": "allow",
+      "head *": "allow",
+      "ls *": "allow",
+      "pwd *": "allow",
+      "sed *": "allow",
+      "tail *": "allow",
+      "tree *": "allow",
+      "wc *": "allow"
+    },
+    "external_directory": "ask",
+    "external_directory_read": {
+      "~/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent/*": "allow",
+      "~/.pi/agent/*": "allow"
+    }
+  }
+}

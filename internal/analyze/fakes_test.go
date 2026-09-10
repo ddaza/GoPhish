@@ -44,6 +44,11 @@ type FakeFuzzer struct {
 	LastMax            int
 }
 
+// Score implements [Fuzzer].
+func (f *FakeFuzzer) Score() string {
+	panic("unimplemented")
+}
+
 func (f *FakeFuzzer) Name() string {
 	return f.NameVal
 }
