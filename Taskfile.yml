@@ -44,3 +44,8 @@ tasks:
     desc: Remove the dist/ folder
     cmds:
       - rm -rf dist
+
+  test: 
+    desc: Run Tests
+    cmds:
+      - go test ./...
