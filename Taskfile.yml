@@ -25,12 +25,15 @@ tasks:
 
   build:windows:
     desc: Build for Windows (amd64) -> dist/gophish-windows-amd64.exe
-    vars:
-      GOOS: windows
-      GOARCH: amd64
-      EXT: .exe
     cmds:
       - task: build
+        vars: { GOOS: windows, GOARCH: amd64, EXT: .exe }
+
+  build:linux:
+    desc: Build for Linux (amd64) -> dist/gophish-linux-amd64
+    cmds:
+      - task: build
+        vars: { GOOS: linux, GOARCH: amd64, EXT: '' }
 
   build:macos:
     desc: Build for macOS (amd64 + arm64) -> dist/gophish-darwin-*
