@@ -1,4 +1,4 @@
-name: Test
+name: Task 
 
 on:
   pull_request:
