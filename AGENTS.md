@@ -52,6 +52,25 @@ are specified in `docs/Plan.md` §4.2 and §13.
 - **Errors**: wrap with context; don't swallow. Log at source, surface to UI.
 - **Tests**: unit tests for `fuzz`, `detect`, `source` parsing; fixtures under
   `test/`. Network calls mocked via `httptest`.
+  - **Test style — white-box first.** Write unit tests **in-package**
+    (`package analyze` in `internal/analyze/engine_test.go`) so tests can reach
+    unexported internals (state machines, helpers, unexported fields). This is
+    the default for unit tests of package internals.
+  - **Black-box for consumer-facing contracts.** When testing an interface
+    consumed from outside the package — e.g. the orchestrator `Service`
+    interface used by the TUI/CLI/API (Plan.md §4.2), or any public API/TUI
+    surface — prefer an **external test package** (`package analyze_test`).
+    This proves the exported API is sufficient for its consumers. Name these
+    files with an `_XXX_test.go` suffix (e.g. `engine_api_test.go`,
+    `engine_tui_test.go`) so the two styles are distinguishable at a glance.
+    Both styles may coexist in one directory.
+  - **File naming**: test files mirror the file under test (`engine.go` →
+    `engine_test.go`, `job.go` → `job_test.go`). Test helpers, fakes, and
+    deterministic doubles live in `_test.go` files too (e.g. `fakes_test.go`),
+    **never** in regular `.go` files — helpers in a plain `.go` file get
+    compiled into the production binary. Only extract shared helpers into a
+    separate package (e.g. `internal/testutil`) once a second package actually
+    needs them (YAGNI).
   - Use **testify** for assertions and error checks (`assert`, `require`) rather
     than the stdlib `t.Errorf`/`t.Fatalf` style — it reads cleaner and gives
     better failure messages. Import `github.com/stretchr/testify/assert` and
