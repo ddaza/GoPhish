@@ -87,7 +87,6 @@ type Cluster struct {
 type Fuzzer interface {
 	Name() string
 	Generate(ctx context.Context, seed string, max int) ([]Candidate, error)
-	Score() string
 }
 
 type Scorer interface {

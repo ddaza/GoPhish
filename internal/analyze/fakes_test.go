@@ -8,6 +8,16 @@ import (
 	"go.uber.org/zap"
 )
 
+// Compile-time checks that the fakes satisfy the service interfaces (Plan.md
+// §4.2). If an interface changes, this file stops compiling.
+var (
+	_ Source     = (*FakeSource)(nil)
+	_ Fuzzer     = (*FakeFuzzer)(nil)
+	_ Scorer     = (*FakeScorer)(nil)
+	_ Clusterer  = (*FakeClusterer)(nil)
+	_ Summarizer = (*FakeSummarizer)(nil)
+)
+
 // ---- Fake Source ----
 
 // FakeSource is a deterministic Source for tests. It returns
@@ -42,11 +52,6 @@ type FakeFuzzer struct {
 	CallCount          atomic.Int32
 	LastSeed           string
 	LastMax            int
-}
-
-// Score implements [Fuzzer].
-func (f *FakeFuzzer) Score() string {
-	panic("unimplemented")
 }
 
 func (f *FakeFuzzer) Name() string {
