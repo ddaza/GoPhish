@@ -25,10 +25,10 @@ type MiniLoopConfig struct {
 // instances are injected at construction time, so tests and
 // production wiring use the same code path.
 type Engine struct {
-	source    Source
-	fuzzer    Fuzzer
-	scorer    Scorer
-	clusterer Clusterer
+	source     Source
+	fuzzer     Fuzzer
+	scorer     Scorer
+	clusterer  Clusterer
 	summarizer Summarizer
 
 	loop MiniLoopConfig

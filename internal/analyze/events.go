@@ -15,7 +15,7 @@ const (
 	EventStageChanged   = "stage_changed"
 	EventFuzzed         = "fuzzed"
 	EventSourceChecked  = "source_checked"
-	EventScored        = "scored"
+	EventScored         = "scored"
 	EventSummarized     = "summarized"
 	EventQuotaExhausted = "quota_exhausted"
 	EventDone           = "done"
@@ -49,7 +49,7 @@ type StageChangedPayload struct {
 }
 
 type FuzzedPayload struct {
-	Count     int
+	Count      int
 	Candidates []Candidate
 }
 
@@ -83,7 +83,7 @@ type ErrorPayload struct {
 type EventBroker struct {
 	mu    sync.Mutex
 	jobs  map[string]*jobState // keyed by jobID
-	order []string              // insertion order for deterministic iteration
+	order []string             // insertion order for deterministic iteration
 }
 
 // NewEventBroker creates an empty broker.
