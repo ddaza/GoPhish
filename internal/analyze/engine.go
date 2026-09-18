@@ -18,8 +18,8 @@ type MiniLoopConfig struct {
 // Engine runs the GoPhish pipeline behind the Service interface.
 //
 // MVP transport: goroutines in-process. The WS/gRPC adapter is
-// deferred to Slice 10 (internal/transport); swapping the adapter
-// does not change the interfaces.
+// deferred to Milestone 10 (internal/transport, Plan §5.11); swapping
+// the adapter does not change the interfaces.
 //
 // DI: concrete (or fake) Source/Fuzzer/Scorer/Clusterer/Summarizer
 // instances are injected at construction time, so tests and

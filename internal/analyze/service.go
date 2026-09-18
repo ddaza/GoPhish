@@ -6,7 +6,8 @@
 // and differ only in transport.
 //
 // MVP transport: in-process goroutines behind the interfaces. The
-// WS/gRPC adapter is deferred to Slice 10 (internal/transport).
+// WS/gRPC adapter is deferred to Milestone 10 (internal/transport,
+// Plan §5.11).
 package analyze
 
 import (

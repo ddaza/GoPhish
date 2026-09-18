@@ -27,10 +27,18 @@ The repo currently has:
 - `cmd/gophish/main.go`
 - `internal/config`
 - `internal/tui` (minimal Bubble Tea app: `app.go`)
+- `internal/analyze` (orchestrator: `service.go`, `job.go`, `events.go`,
+  `engine.go`, fake-backed tests — Milestone 1)
 - `docs/adr`
-- dependency surface: `bubbletea`, `lipgloss`, `viper`, `testify`
+- dependency surface: `bubbletea`, `lipgloss`, `viper`, `testify`, `zap`
 
-Most of the pipeline described in `AGENTS.md` is **not implemented yet**.
+**Milestones 0–1 are complete** (foundations + orchestrator core, see §5):
+the pipeline runs end-to-end against fake services. The real `source`,
+`fuzz`, `detect`, and `llm` subsystems are **not implemented yet** — they
+are Milestones 2–8.
+
+> Known deviation: `internal/analyze` logs with `zap` while §12 pins
+> `zerolog`; resolving this is an open item of Milestone 1 (§5.2).
 
 ## 3. Challenges to the initial diagram
 
@@ -491,60 +499,183 @@ microservice into its own container and orchestrate them with Kubernetes**, wher
 orchestrator↔service calls become cross-pod RPC. This keeps the “good enough,
 iterate” principle while honoring your target topology.
 
-## 5. Implementation order
+## 5. Roadmap (milestones)
 
-Do this in vertical slices. Each slice should be runnable end-to-end.
+Work is organized into **milestones**: shippable, user-visible chunks built
+from vertical slices. Each milestone must leave the product runnable
+end-to-end when it closes, and only one milestone is in flight at a time.
+Milestones 0–1 are done; the tracker below is updated as each closes.
 
-1. **ADR + interface contract**
-   - file **ADR-0003** (orchestrator subsystem)
-   - define `Query`, `Result`, `Candidate`, `Finding`, `Job`, `Event`, `Service`
-   - add unit tests with fake implementations
+| # | Milestone | Status | Delivers |
+| --- | --- | --- | --- |
+| 0 | Foundations | done | repo skeleton, config loader (ADR-0002), TUI stub, CI, stack pinning |
+| 1 | Orchestrator core | done | `Service` contract, job state machine, events, engine pipeline (ADR-0003) |
+| 2 | Fuzzer | next | `internal/fuzz`: offline candidate generation |
+| 3 | First source + throttle | | RDAP + `internal/throttle`: first real end-to-end scan |
+| 4 | Detection | | `internal/detect`: ranked, explained findings |
+| 5 | Mini loop + CLI experience | | config-bounded expansion loop, polished `scan` command |
+| 6 | TUI wiring | | live TUI on the `Service` interface |
+| 7 | LLM narrative | | `internal/llm`: Ollama default, llama.cpp fallback |
+| 8 | Source expansion | | crt.sh, CertStream, WHOIS, PhishTank |
+| 9 | Store, cache & API | | SQLite cache, `store purge`, `internal/api` |
+| 10 | Transport & containerization | | `internal/transport` (gRPC/WS) → containers → k8s |
 
-2. **One working source + one fuzzer** (config-driven primary source)
-   - implement the **config-selected primary early signal** source first
-     (RDAP or CertStream by default; any source can be primary per config)
-   - implement `tldswap.go`
-   - wire a CLI `scan` command that prints findings
-   - proves end-to-end without UI complexity
+Milestone numbering is **stable**: code and docs reference "Milestone N",
+so new work is added *inside* a milestone (or appended) rather than
+renumbering the list.
 
-3. **Throttle + quota**
-   - add `internal/throttle` with `Limiter.Wait(ctx)`
-   - tests with short windows and deterministic clocks
+### 5.0 How to work a milestone
 
-4. **Scoring + clustering**
-   - add `detect/similarity.go`, `detect/bulkreg.go`, `detect/score.go`
-   - no LLM yet
+Every milestone is built from vertical slices; each slice compiles, passes
+`go test ./...`, and keeps the end-to-end scenario working (§9). When a
+milestone closes:
 
-5. **Job/event model + mini loop**
-   - add `analyze/job.go`, `analyze/events.go`, `analyze/engine.go`
-   - implement the `CHECKING ⇄ FUZZING` loop with config bounds
-   - wire CLI output to events
+1. run `go build ./...` and `go test ./...`
+2. verify the milestone's deliverable end-to-end
+3. update the status table above and file the ADR(s) it required
+4. if blocked, stop per §10 — reduce scope, do not widen the architecture
 
-6. **CLI packaging**
-   - `scan` command with stage/progress output
-   - config-driven source enablement + primary-source selection
+### 5.1 Milestone 0 — Foundations (done)
 
-7. **TUI wiring**
-   - `internal/tui` calls the `Service` interface via `tea.Cmd`
-   - views per `AGENTS.md` §5.5: Search/Seed, Results list, Domain detail,
-     Clusters/campaigns, LLM analysis, Settings
-   - live event list + current stage + result table
+Repo skeleton, config loader (ADR-0002), minimal Bubble Tea TUI, CI hooks,
+and the stack pinning in §12.
 
-8. **LLM**
-   - Ollama client (default) + llama.cpp fallback
-   - summarize only after #1-7 are stable
+### 5.2 Milestone 1 — Orchestrator core (done)
 
-9. **Store / cache / API**
-   - defer until UI and CLI feel solid
-   - `internal/api` later, reusing the `Service` interface
+The "engine". ADR-0003 plus the full interface contract and pipeline runner,
+proven against fakes:
 
-10. **Service-transport adapter + containerization (WS/gRPC → k8s)**
-   - add `internal/transport` (gRPC/WS) implementing the service interfaces
-   - only after the in-process (goroutine) pipeline (slices 1–8) is proven
-   - later: extract each microservice into its own container, orchestrate with
-     Kubernetes; orchestrator↔service calls become cross-pod RPC
-   - clients (TUI/API/SDK) stay on the `Service` interface; this does not
-     change their code
+- `analyze/service.go` — `Query`, `Result`, `Candidate`, `Finding`, `Job`,
+  `Event`, and the consumer-facing `Service` interface
+- `analyze/job.go` — the §4.4 state machine
+- `analyze/events.go` — typed events + fan-out broker
+- `analyze/engine.go` — the pipeline runner (in-process goroutine
+  transport, §4.9)
+- unit tests with fake implementations (white-box + black-box styles per
+  `AGENTS.md` §6)
+
+Open items (close before starting Milestone 3):
+
+- align logging with §12: the engine currently uses `zap`; `zerolog` is the
+  pinned choice, and swapping a foundational dependency needs a proposal
+  per `AGENTS.md` §2/§6
+- optional: a CLI smoke path that runs one job end-to-end with fakes
+
+### 5.3 Milestone 2 — Fuzzer (`internal/fuzz`)
+
+Offline, deterministic, and network-free — the fastest safe replacement of
+a fake service in the engine.
+
+- `normalize.go` — unicode/punycode normalization + dedupe; fuzzer output
+  is untrusted input (§8.2)
+- `tldswap.go` first (smallest), then `typosquat.go`, `homoglyph.go`,
+  `permutations.go`
+- bound output with `--max`; flag candidates, never auto-query them (§13)
+- in-package unit tests per `AGENTS.md` §6
+- ADR-0004 (implements a core interface, `AGENTS.md` §8)
+
+**Deliverable:** `gophish fuzz --seed example.com --max 100` prints deduped,
+normalized candidates; the engine's fake `Fuzzer` is swapped for the real
+one in `cmd/gophish` wiring.
+
+### 5.4 Milestone 3 — First real source + throttle
+
+The first network milestone, so politeness controls ship with it.
+
+- `internal/throttle` — per-source `Limiter` with `Wait(ctx)` combining
+  rate + quota; `quota_exhausted` instead of fatal errors (§4.6); tests
+  with short windows and deterministic clocks
+- `source/source.go` — home of the `Source` interface + `Query`/`Result`
+  models
+- `source/rdap.go` — the config-selected **primary early signal** source
+  (RDAP by default; any source can be primary per config)
+- parsing tests with fixtures under `test/`; network mocked via `httptest`
+- ADR-0005 (new subsystem + first `Source` implementation, `AGENTS.md` §8)
+
+**Deliverable:** `gophish scan --seed example.com` runs the real pipeline
+end-to-end — seed check → fuzz → check → raw findings printed by the CLI.
+
+### 5.5 Milestone 4 — Detection (`internal/detect`)
+
+- `similarity.go` (Levenshtein/Damerau, Jaccard, brand match),
+  `bulkreg.go` (bulk-registration clustering), `score.go` (weighted risk
+  score) — free OSINT signals only, no external reputation lookups (§13)
+- `Confidence`/`Label` drive the "suspicious, unverified" UI rule (§8.3)
+- no LLM yet
+- ADR-0006 (implements a core interface)
+
+**Deliverable:** `scan` prints a ranked, explained list of look-alikes with
+confidence labels — the §1 MVP outcome, minus the narrative.
+
+### 5.6 Milestone 5 — Mini loop + CLI experience
+
+- the `CHECKING ⇄ FUZZING` mini loop (§4.8) against real services, bounded
+  by config: max iterations, per-seed candidate cap, expansion rules
+- per-source quota exhaustion handling (§4.6)
+- `scan` command with stage/progress event timeline; config-driven source
+  enablement + primary-source selection
+
+**Deliverable:** one `scan` run surfaces bulk-registration clusters by
+iterating around confirmed hits, with live progress in the CLI.
+
+### 5.7 Milestone 6 — TUI wiring
+
+- `internal/tui` calls the `Service` interface via `tea.Cmd`
+- views per `AGENTS.md` §5.5: Search/Seed, Results list, Domain detail,
+  Clusters/campaigns, LLM analysis, Settings
+- live event list + current stage + result table
+
+**Deliverable:** the full scan workflow is usable from the TUI.
+
+### 5.8 Milestone 7 — LLM narrative (`internal/llm`)
+
+Only after Milestones 1–6 are stable.
+
+- Ollama client (default) + llama.cpp fallback behind `Summarizer` (§3.5)
+- prompts in `prompts.go`; structured-output validation test per
+  `AGENTS.md` §8
+- LLM output is displayed, never executed (§8.4)
+- ADR-0007 (implements a core interface)
+
+**Deliverable:** `scan` ends with a campaign narrative, IOCs, and
+per-domain explanations.
+
+### 5.9 Milestone 8 — Source expansion
+
+Additional free/freemium sources, one slice each — each source is a major
+change (ADR + config keys + parsing test + fixture, `AGENTS.md` §8):
+
+- `crtsh.go` (historical CT) and `certstream.go` (live CT)
+- `whois.go` (fallback)
+- `phishtank.go` (known-phishing feed; free API key via `api_key_env`)
+
+**Deliverable:** richer `Result` evidence and cross-source corroboration in
+findings; the core loop itself is unchanged.
+
+### 5.10 Milestone 9 — Store, cache & API
+
+Deferred until the UI and CLI feel solid (§4.7, phases 2–3):
+
+- `internal/store` — SQLite (`modernc.org/sqlite`) cache of seen
+  domains/results; run resume; `store purge` command (data minimization,
+  `AGENTS.md` §7.5)
+- `internal/api` — programmatic client reusing the `Service` interface;
+  event streaming with back-pressure replaces the drop-and-close
+  subscriber policy in `internal/analyze/events.go`
+
+**Deliverable:** repeat scans are faster (cache), jobs survive restarts,
+and GoPhish is scriptable over HTTP.
+
+### 5.11 Milestone 10 — Transport & containerization
+
+Only after the in-process (goroutine) pipeline (Milestones 1–8) is proven:
+
+- `internal/transport` — gRPC/WS adapters implementing the service
+  interfaces; each stage swaps the adapter, not the logic (§4.9)
+- later: extract each microservice into its own container, orchestrate with
+  Kubernetes; orchestrator↔service calls become cross-pod RPC
+- clients (TUI/API/SDK) stay on the `Service` interface; this does not
+  change their code
 
 ## 6. Constraints
 

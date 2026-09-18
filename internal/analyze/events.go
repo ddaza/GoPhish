@@ -28,8 +28,8 @@ const (
 // Boring default: the subscriber channel is buffered (capacity 64) so a
 // slow reader does not block the pipeline. If the buffer fills, we drop
 // a single EventError on that subscriber's channel. A bounded ring or
-// WS/GRPC streaming subscription (with back-pressure) can come in the
-// API slice (Plan §5.9).
+// WS/GRPC streaming subscription (with back-pressure) can come in
+// Milestone 9 (store/API, Plan §5.10).
 const subscriberBuf = 64
 
 // Event is the unit of progress emitted to subscribers.
