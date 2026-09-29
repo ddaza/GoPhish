@@ -1,0 +1,41 @@
+name: Setup Go and Task
+description: >-
+  Installs Go (version from go.mod, with module + build cache) and the Task
+  runner (cached binary, version pinned).
+
+inputs:
+  task-version:
+    description: go-task version to install (without the leading "v")
+    required: false
+    default: "3.53.1"
+
+runs:
+  using: composite
+  steps:
+    # Caches both the Go module cache and the build cache, keyed off go.sum.
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+        cache: true
+
+    # setup-task has no built-in caching, so cache the binary ourselves and
+    # only download it on a cache miss.
+    - name: Cache Task binary
+      id: task-cache
+      uses: actions/cache@v5
+      with:
+        path: .taskbin
+        key: task-${{ inputs.task-version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install Task
+      if: steps.task-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        mkdir -p .taskbin
+        curl -fsSL "https://github.com/go-task/task/releases/download/v${{ inputs.task-version }}/task_linux_amd64.tar.gz" \
+          | tar -xz -C .taskbin
+
+    - name: Add Task to PATH
+      shell: bash
+      run: echo "$GITHUB_WORKSPACE/.taskbin" >> "$GITHUB_PATH"

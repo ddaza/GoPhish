@@ -1,0 +1,5 @@
+pre-commit:
+  commands:
+    format:
+      glob: "*.go"
+      run: go fmt {staged_files}
