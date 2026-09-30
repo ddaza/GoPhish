@@ -30,6 +30,9 @@ The repo currently has:
 - `internal/analyze` (orchestrator: `service.go`, `job.go`, `events.go`,
   `engine.go`, fake-backed tests — Milestone 1)
 - `docs/adr`
+- `docs/poc` — POC-0001 (manual pipeline mechanics), POC-0002 (live seed
+  test, `gov-<rand>.fit`), POC-0003 (Gname bulk-reg mechanics + campaign
+  intel); findings folded into §4.8/§13 via ADR-0008
 - dependency surface: `bubbletea`, `lipgloss`, `viper`, `testify`, `zap`
 
 **Milestones 0–1 are complete** (foundations + orchestrator core, see §5):
@@ -61,7 +64,7 @@ must not be conflated:
   exposed to clients.
 
 So the earlier “don’t network-wrap the orchestrator” note is refined: keep
-WS/gRPC *inside* the service boundary; keep clients on the `Service` interface.
+WS/gRPC _inside_ the service boundary; keep clients on the `Service` interface.
 
 **Evolution, not big-bang:** In the MVP the microservices run as **goroutines**
 in a single binary, wired through in-process adapters behind the same
@@ -77,7 +80,7 @@ A single box labeled “Service Layer” tends to absorb everything. We split it
 
 - **Service-transport adapters** — `internal/transport` (gRPC/WS) carry orchestrator ↔ microservice calls. Hidden from clients.
 - **Interaction adapters** — `cmd/gophish` (TUI/CLI) today; `internal/api` later. They call the orchestrator through the `Service` interface + glue, not the WS/gRPC transport.
-- **Orchestrator** — `internal/analyze`: *oversees the progress of the services, schedules them, and logs events*. This is the commander (see ADR-0003).
+- **Orchestrator** — `internal/analyze`: _oversees the progress of the services, schedules them, and logs events_. This is the commander (see ADR-0003).
 - **Config** — `internal/config`.
 - **Services** — `source`, `fuzz`, `detect`, `llm`, each behind its own interface.
 
@@ -355,6 +358,7 @@ The orchestrator (`internal/analyze`) is the commander. Per ADR-0003 it
   4. **mini loop** — expand around confirmed hits (see §4.8), looping back to fuzz/check per config
   5. **score + cluster** — deterministic detection
   6. **summarize** — optional LLM narrative
+
 - emits progress `Event`s and logs them (zerolog)
 - updates job state
 - honors cancellation at the job level
@@ -381,19 +385,19 @@ CREATED
 
 State transitions:
 
-| From | To | Meaning |
-| --- | --- | --- |
-| CREATED | SEEDING | starting source lookup on seed |
-| SEEDING | FUZZING | seed observations ready |
-| SEEDING | FAILED | unrecoverable seed lookup failure |
-| FUZZING | CHECKING | candidates generated |
-| CHECKING | FUZZING | mini loop: expand around confirmed hits |
-| CHECKING | SEEDING | mini loop: re-seed from confirmed cluster (per config) |
-| CHECKING | SCORING | checks complete or quota exhausted for all sources |
-| SCORING | SUMMARIZING | deterministic scoring done |
-| SUMMARIZING | COMPLETED | LLM summary ready |
-| ANY | CANCELLED | user cancelled |
-| ANY | FAILED | fatal error |
+| From        | To          | Meaning                                                |
+| ----------- | ----------- | ------------------------------------------------------ |
+| CREATED     | SEEDING     | starting source lookup on seed                         |
+| SEEDING     | FUZZING     | seed observations ready                                |
+| SEEDING     | FAILED      | unrecoverable seed lookup failure                      |
+| FUZZING     | CHECKING    | candidates generated                                   |
+| CHECKING    | FUZZING     | mini loop: expand around confirmed hits                |
+| CHECKING    | SEEDING     | mini loop: re-seed from confirmed cluster (per config) |
+| CHECKING    | SCORING     | checks complete or quota exhausted for all sources     |
+| SCORING     | SUMMARIZING | deterministic scoring done                             |
+| SUMMARIZING | COMPLETED   | LLM summary ready                                      |
+| ANY         | CANCELLED   | user cancelled                                         |
+| ANY         | FAILED      | fatal error                                            |
 
 The `CHECKING ⇄ FUZZING` (and optional `CHECKING → SEEDING`) edges are the
 **mini loop** from `AGENTS.md` §4.1.
@@ -483,14 +487,28 @@ fuzz again ──► expand around confirmed hits (config-bound)
 source check again ──► until no new same-registrar domains or cap reached
 ```
 
+**Two operating modes** (ADR-0008, from POC-0002/0003 evidence):
+
+- **Mode A — generation (default).** The loop above: generate candidates
+  from the seed, check, expand around confirmed hits. Correct for
+  typosquat/homoglyph/TLD-swap/brand-keyword families and for expanding
+  *known* tokens.
+- **Mode B — recognition.** For random-token families (e.g. the
+  `gov-wwa.fit` / `gov-sdas.fit` campaign), tokens are independent random
+  strings registered just-in-time, so enumeration has ~zero yield
+  (POC-0002: 0/34). Here the loop inverts: an inbound NRD/RDAP stream is
+  filtered by campaign-shape recognizers in `internal/detect`, then
+  corroborated (registrar, age, NS/ASN pivots). The fuzzer's role is
+  recognition, not generation, for these families.
+
 ### 4.9 Communication boundaries
 
 Two boundaries, deliberately different:
 
-| Boundary | Transport (MVP → target) | Notes |
-| --- | --- | --- |
+| Boundary                                              | Transport (MVP → target)                                                              | Notes                                                                                                                                                                                      |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Orchestrator ↔ microservices (source/fuzz/detect/llm) | **goroutines (MVP)** → **WebSocket/gRPC** → **containers orchestrated by Kubernetes** | Internal; not exposed to clients. The `Source`/`Fuzzer`/`Scorer`/`Clusterer`/`Summarizer` interfaces are the contract the adapters implement; each stage swaps the adapter, not the logic. |
-| Interaction services (TUI/API/SDK) ↔ orchestrator | **Interface contract + glue code** (`Service` interface) | No WS/gRPC to clients. TUI and API share logic, differ only in presentation/transport. |
+| Interaction services (TUI/API/SDK) ↔ orchestrator     | **Interface contract + glue code** (`Service` interface)                              | No WS/gRPC to clients. TUI and API share logic, differ only in presentation/transport.                                                                                                     |
 
 In the MVP the microservices run as **goroutines** in one binary, wired through
 in-process adapters — no network transport. The WS/gRPC adapter is added later
@@ -506,22 +524,22 @@ from vertical slices. Each milestone must leave the product runnable
 end-to-end when it closes, and only one milestone is in flight at a time.
 Milestones 0–1 are done; the tracker below is updated as each closes.
 
-| # | Milestone | Status | Delivers |
-| --- | --- | --- | --- |
-| 0 | Foundations | done | repo skeleton, config loader (ADR-0002), TUI stub, CI, stack pinning |
-| 1 | Orchestrator core | done | `Service` contract, job state machine, events, engine pipeline (ADR-0003) |
-| 2 | Fuzzer | next | `internal/fuzz`: offline candidate generation |
-| 3 | First source + throttle | | RDAP + `internal/throttle`: first real end-to-end scan |
-| 4 | Detection | | `internal/detect`: ranked, explained findings |
-| 5 | Mini loop + CLI experience | | config-bounded expansion loop, polished `scan` command |
-| 6 | TUI wiring | | live TUI on the `Service` interface |
-| 7 | LLM narrative | | `internal/llm`: Ollama default, llama.cpp fallback |
-| 8 | Source expansion | | crt.sh, CertStream, WHOIS, PhishTank |
-| 9 | Store, cache & API | | SQLite cache, `store purge`, `internal/api` |
-| 10 | Transport & containerization | | `internal/transport` (gRPC/WS) → containers → k8s |
+| #   | Milestone                    | Status | Delivers                                                                  |
+| --- | ---------------------------- | ------ | ------------------------------------------------------------------------- |
+| 0   | Foundations                  | done   | repo skeleton, config loader (ADR-0002), TUI stub, CI, stack pinning      |
+| 1   | Orchestrator core            | done   | `Service` contract, job state machine, events, engine pipeline (ADR-0003) |
+| 2   | Fuzzer                       | next   | `internal/fuzz`: offline candidate generation                             |
+| 3   | First source + throttle      |        | RDAP + `internal/throttle`: first real end-to-end scan                    |
+| 4   | Detection                    |        | `internal/detect`: ranked, explained findings                             |
+| 5   | Mini loop + CLI experience   |        | config-bounded expansion loop, polished `scan` command                    |
+| 6   | TUI wiring                   |        | live TUI on the `Service` interface                                       |
+| 7   | LLM narrative                |        | `internal/llm`: Ollama default, llama.cpp fallback                        |
+| 8   | Source expansion             |        | crt.sh, CertStream, WHOIS, PhishTank                                      |
+| 9   | Store, cache & API           |        | SQLite cache, `store purge`, `internal/api`                               |
+| 10  | Transport & containerization |        | `internal/transport` (gRPC/WS) → containers → k8s                         |
 
 Milestone numbering is **stable**: code and docs reference "Milestone N",
-so new work is added *inside* a milestone (or appended) rather than
+so new work is added _inside_ a milestone (or appended) rather than
 renumbering the list.
 
 ### 5.0 How to work a milestone
@@ -646,6 +664,9 @@ Additional free/freemium sources, one slice each — each source is a major
 change (ADR + config keys + parsing test + fixture, `AGENTS.md` §8):
 
 - `crtsh.go` (historical CT) and `certstream.go` (live CT)
+- `nrd.go` — newly-registered-domain feed; the Mode-B input stream for
+  shape recognition (ADR-0008). Free daily NRD lists keep this
+  free/freemium (ADR-0001).
 - `whois.go` (fallback)
 - `phishtank.go` (known-phishing feed; free API key via `api_key_env`)
 
@@ -756,6 +777,7 @@ If any slice is blocked because:
 - the chosen slice requires transport/database decisions that are out of scope,
 
 then stop and write a short report with:
+
 - what was attempted,
 - exact blocker evidence,
 - the minimum input needed to continue,
@@ -765,58 +787,73 @@ Do not invent fallback behavior that weakens the scope.
 
 ## 11. Reconciliation log (Plan vs AGENTS.md)
 
-| # | Topic | Resolution |
-| --- | --- | --- |
-| 1 | Orchestration package | Use `internal/analyze`; orchestrator role defined in ADR-0003. |
-| 2 | Mini loop | Added §4.8 + cyclic `CHECKING ⇄ FUZZING` state edge. |
-| 3 | Source interface | Keep `AGENTS.md` §5.1 signature `Fetch(ctx, Query) ([]Result, error)`; add consumer-facing `Service` interface for TUI/API. |
-| 4 | Pipeline order | `seed (check) → fuzz → check → back to seed (per config) → exit`. |
-| 5 | Throttle | `internal/throttle` package; `Limiter.Wait(ctx)` per `AGENTS.md` §5.6. |
-| 6 | CLI/TUI/API | Commands in `cmd/gophish`; `internal/tui` retained; future `internal/api` shares `Service` interface. |
-| 7 | `internal/tui` | Retained in layout (existing code). |
-| 8 | detect filenames | `similarity.go`, `bulkreg.go`, `score.go` per `AGENTS.md`. |
-| 9 | CertStream/primary source | Config-driven: any source can be the primary early signal. |
-| L1 | Logging | `zerolog` added to constraints. |
-| L2 | Provenance | `Result.Provenance` added. |
-| L3 | False-positive label | `Finding.Confidence`/`Label` + UI labeling rule. |
-| L4 | LLM fallback | Ollama default + llama.cpp fallback noted. |
-| L5 | Go version | Pinned 1.22+ in constraints. |
-| L6 | TUI views | Listed 6 views from `Plan.md` §5.7. |
-| 10 | Transport boundaries | Orchestrator↔services use WS/gRPC (`internal/transport`); interaction↔orchestrator use `Service` interface + glue, no WS/gRPC to clients. |
+| #   | Topic                     | Resolution                                                                                                                                |
+| --- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Orchestration package     | Use `internal/analyze`; orchestrator role defined in ADR-0003.                                                                            |
+| 2   | Mini loop                 | Added §4.8 + cyclic `CHECKING ⇄ FUZZING` state edge.                                                                                      |
+| 3   | Source interface          | Keep `AGENTS.md` §5.1 signature `Fetch(ctx, Query) ([]Result, error)`; add consumer-facing `Service` interface for TUI/API.               |
+| 4   | Pipeline order            | `seed (check) → fuzz → check → back to seed (per config) → exit`.                                                                         |
+| 5   | Throttle                  | `internal/throttle` package; `Limiter.Wait(ctx)` per `AGENTS.md` §5.6.                                                                    |
+| 6   | CLI/TUI/API               | Commands in `cmd/gophish`; `internal/tui` retained; future `internal/api` shares `Service` interface.                                     |
+| 7   | `internal/tui`            | Retained in layout (existing code).                                                                                                       |
+| 8   | detect filenames          | `similarity.go`, `bulkreg.go`, `score.go` per `AGENTS.md`.                                                                                |
+| 9   | CertStream/primary source | Config-driven: any source can be the primary early signal.                                                                                |
+| L1  | Logging                   | `zerolog` added to constraints.                                                                                                           |
+| L2  | Provenance                | `Result.Provenance` added.                                                                                                                |
+| L3  | False-positive label      | `Finding.Confidence`/`Label` + UI labeling rule.                                                                                          |
+| L4  | LLM fallback              | Ollama default + llama.cpp fallback noted.                                                                                                |
+| L5  | Go version                | Pinned 1.22+ in constraints.                                                                                                              |
+| L6  | TUI views                 | Listed 6 views from `Plan.md` §5.7.                                                                                                       |
+| 10  | Transport boundaries      | Orchestrator↔services use WS/gRPC (`internal/transport`); interaction↔orchestrator use `Service` interface + glue, no WS/gRPC to clients. |
+| 11  | POC-0001–0003 findings    | Mini loop gains recognition mode (§4.8, ADR-0008); source/detection guidance updated with measured priors (§13); `poc/out/` gitignored.   |
 
 ## 12. Stack
 
 Foundational dependencies (consolidated from the former `AGENTS.md` §2). Do
 not silently swap these; propose changes in a PR per `AGENTS.md` §2/§6.
 
-| Concern         | Choice                                                | Notes                                                        |
-| --------------- | ----------------------------------------------------- | ------------------------------------------------------------ |
-| Language        | **Go** (1.22+)                                        | Strong for CLIs, concurrency, single binaries.              |
-| TUI             | **Bubble Tea** + Lipgloss + Bubbles                   | Idiomatic Go TUI framework.                                  |
-| Data fetching   | stdlib `net/http` + `golang.org/x/time/rate`          | Respect rate limits per source.                             |
-| Config          | `Viper` + `Cobra`                                     | CLI flags/subcommands + config file.                        |
-| Local LLM       | `llama.cpp` (or `ollama` HTTP); default **Ollama**    | Pluggable backend; default to Ollama for portability.        |
-| Storage (local) | SQLite (`modernc.org/sqlite`)                          | Zero-dependency local cache of seen domains/results.        |
-| Logging         | `zerolog`                                              | Structured, leveled.                                         |
+| Concern         | Choice                                             | Notes                                                 |
+| --------------- | -------------------------------------------------- | ----------------------------------------------------- |
+| Language        | **Go** (1.22+)                                     | Strong for CLIs, concurrency, single binaries.        |
+| TUI             | **Bubble Tea** + Lipgloss + Bubbles                | Idiomatic Go TUI framework.                           |
+| Data fetching   | stdlib `net/http` + `golang.org/x/time/rate`       | Respect rate limits per source.                       |
+| Config          | `Viper` + `Cobra`                                  | CLI flags/subcommands + config file.                  |
+| Local LLM       | `llama.cpp` (or `ollama` HTTP); default **Ollama** | Pluggable backend; default to Ollama for portability. |
+| Storage (local) | SQLite (`modernc.org/sqlite`)                      | Zero-dependency local cache of seen domains/results.  |
+| Logging         | `zerolog`                                          | Structured, leveled.                                  |
 
 ## 13. Subsystem guidance (condensed from former AGENTS.md §5)
 
 - **Sources** (`internal/source`): prefer **RDAP** over legacy WHOIS
   (structured, no scraping, rate-friendly). **Certificate Transparency**
   (crt.sh + CertStream) is a primary early signal — made configurable as the
-  primary source per §4.1/§4.8. Only free/freemium sources; record provenance
-  on every `Result` (§4.2).
+  primary source per §4.1/§4.8 — **but CT is blind to cert-less
+  campaigns** (the `gov-<rand>.fit` family mints no certificates,
+  POC-0002 §3.3 / POC-0003 §2.3): CT absence must corroborate, never
+  clear, a finding. RDAP's 200/404 registration primitive is confirmed on
+  a live `.fit` seed (POC-0002 §3.1), and rdap.org begins 403s at
+  ~90 req/100 s per IP — inform `requests_per_minute` defaults from this
+  (POC-0002 §3.5). Only free/freemium sources; record provenance on every
+  `Result` (§4.2).
 - **Fuzzing** (`internal/fuzz`): typosquat, homoglyph/punycode, TLD swap,
   permutations. Cap combinatorial explosion: dedupe, normalize to punycode,
   bound output (`--max`). Flag generated domains; do **not** auto-query them
-  by default — offer resolve/check as an explicit action.
+  by default — offer resolve/check as an explicit action. **Limits**
+  (POC-0002/0003): permutation fuzzing cannot recover *independent random
+  tokens* (0/34 yield on `gov-<rand>.fit`) — for random-token families the
+  recognizer mode applies (§4.8 Mode B, ADR-0008); generation is for
+  character-level and brand-keyword shapes and for expanding known tokens.
 - **Detection** (`internal/detect`): similarity via Levenshtein/Damerau,
   Jaccard on tokens, brand-substring match; bulk-registration clustering by
   registrar, creation-window, nameservers, and templated name patterns;
   weighted risk score from free OSINT signals only (no external reputation
-  lookups).
+  lookups). **Empirical priors** (POC-0003 §2–§3): registrar concentration
+  (Gname/Dominet-HK/NameSilo dominated a 67k-domain toll-scam corpus),
+  registration age < 72h, `gov|org-` prefix + short random label + cheap
+  TLD (`fit|one|xin|top|vip|world|win`), NS/ASN co-tenancy (share-dns,
+  Alibaba AS45102); **CT absence must not lower a score**.
 - **Local LLM** (`internal/llm`): default **Ollama** HTTP with **llama.cpp**
-  fallback; summarize clusters into a campaign narrative, explain *why* a
+  fallback; summarize clusters into a campaign narrative, explain _why_ a
   domain is risky, propose related IOCs; prompts in `prompts.go`; require and
   validate structured (JSON) output; never send secrets/cookies/credentials —
   only public OSINT attributes.
@@ -828,15 +865,15 @@ not silently swap these; propose changes in a PR per `AGENTS.md` §2/§6.
 
 Per-source keys (from the former `README.md` table):
 
-| Key                  | Purpose                                              |
-| -------------------- | ---------------------------------------------------- |
-| `base_url`           | Endpoint used by the source client.                  |
-| `api_key`            | Optional credential (prefer `api_key_env`).          |
-| `api_key_env`        | Env var that, if set, overrides `api_key`.           |
-| `enabled`            | Toggle the source on/off.                            |
-| `requests_per_minute`| Per-source rate limit.                              |
-| `max_checks`        | Hard quota ceiling for this source.                  |
-| `quota_window`       | Duration after which the quota counter resets.      |
+| Key                   | Purpose                                        |
+| --------------------- | ---------------------------------------------- |
+| `base_url`            | Endpoint used by the source client.            |
+| `api_key`             | Optional credential (prefer `api_key_env`).    |
+| `api_key_env`         | Env var that, if set, overrides `api_key`.     |
+| `enabled`             | Toggle the source on/off.                      |
+| `requests_per_minute` | Per-source rate limit.                         |
+| `max_checks`          | Hard quota ceiling for this source.            |
+| `quota_window`        | Duration after which the quota counter resets. |
 
 Global knobs: fuzzing cap (`--max`), LLM model/endpoint, and the mini-loop
 bounds (max iterations, per-seed candidate limit, expansion rules) are also
