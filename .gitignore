@@ -16,3 +16,6 @@ go.work.sum
 dist/
 *.exe
 *.out
+
+# POC run artifacts (derived OSINT about third parties — POC-0001 §5 Q5)
+poc/out/
